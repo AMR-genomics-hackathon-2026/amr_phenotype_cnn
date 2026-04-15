@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 
+shopt -s extglob
+
 input_bioproject=0
 input_sra=0
 output_dir=$PWD
 filter=0
+threads=1
 list_only=0
 
 HELP="""
@@ -16,22 +19,23 @@ Requires:
 - SRA Toolkit
 
 To use the script:
-	download_bioproject.sh [-i input_bioproject} -o {output_dir}
+	download_sra.sh [-i {input_bioproject} -s {input_sra}] -o {output_dir}
 
 Flags:
 	-i  :  BioProject accession (PRJNA...) [WILL BE PREFERRED OVER INDIVIDUAL SRA]
-	-s  :  Sequence Read Archive (SRA) Accession
+	-s  :  Sequence Read Archive (SRA) Accession (short-read)
 	-o  :  Directory for final output files and FASTQs (default: '${PWD}')
 	-f  :  Filter term for select sample names (partial phrases accepted); only applicable for BioProject input
 	-l  :  List output only (no FASTQs will be downloaded); only applicable for BioProject input
 """
 
-while getopts ":i:s:o:f:l" option; do
+while getopts ":i:s:o:f:t:l" option; do
 	case "${option}" in
 		i) input_bioproject=$OPTARG;;
 		s) input_sra=$OPTARG;;
 		o) output_dir=$OPTARG;;
 		f) filter=$OPTARG;;
+		t) threads=$OPTARG;;
 		l) list_only=1;;
 	esac
 done
@@ -65,22 +69,26 @@ if [ $input_bioproject != 0 ] && [ $input_sra = 0 ]; then
 		echo -e "\n  Working on: ${accession}: ${sample}\n\n"
 
 		# downloading SRA object
-		prefetch ${accession} --output-directory ${output_dir}
+		prefetch --type sra ${accession} --output-directory ${output_dir}
 
 		# pulling fastq files out
-		fasterq-dump --split-files ${output_dir}/${accession}/${accession}.sra --outdir ${output_dir} --outfile ${sample}
+		fasterq-dump --split-files ${output_dir}/${accession}/${accession}.sra?(lite) --outdir ${output_dir} --outfile ${sample}
 
 		# rename output
 		rename -d 's/_1\.fastq/_R1\.fastq/g' ${output_dir}/${sample}_1.fastq
 		rename -d 's/_2\.fastq/_R2\.fastq/g' ${output_dir}/${sample}_2.fastq
 
-		# GZip
-		gzip ${output_dir}/${sample}_R1.fastq
-		gzip ${output_dir}/${sample}_R2.fastq
+		# GZip/pigz
+		pigz -p ${threads} ${output_dir}/${sample}_R1.fastq
+		pigz -p ${threads} ${output_dir}/${sample}_R2.fastq
 
 		# removing SRA object
+		echo -e "\n Cleaning up SRA..."
 		rm -rf ${output_dir}/${accession}
 	done < ${output_dir}/${input_bioproject}.tsv
+	
+	echo -e "\n Cleaning up intermediate..."
+	rm -rf ${output_dir}/${input_bioproject}.tsv
 
 elif [ $input_bioproject = 0 ] && [ $input_sra != 0 ]; then
 # SRA
@@ -93,18 +101,18 @@ elif [ $input_bioproject = 0 ] && [ $input_sra != 0 ]; then
 	echo -e "\n  Working on: ${accession}"
 
 	# downloading SRA object
-	prefetch ${accession} --output-directory ${output_dir}
+	prefetch --type sra ${accession} --output-directory ${output_dir}
 
 	# pulling fastq files out
-	fasterq-dump --split-files ${output_dir}/${accession}/${accession}.sra --outdir ${output_dir} --outfile ${accession}
+	fasterq-dump --split-files ${output_dir}/${accession}/${accession}.sra?(lite) --outdir ${output_dir} --outfile ${accession}
 
 	# rename output
 	rename -d 's/_1\.fastq/_R1\.fastq/g' ${output_dir}/${accession}_1.fastq
 	rename -d 's/_2\.fastq/_R2\.fastq/g' ${output_dir}/${accession}_2.fastq
 
-	# GZip
-	gzip ${output_dir}/${accession}_R1.fastq
-	gzip ${output_dir}/${accession}_R2.fastq
+	# GZip/pigz
+	pigz -p ${threads} ${output_dir}/${accession}_R1.fastq
+	pigz -p ${threads} ${output_dir}/${accession}_R2.fastq
 
 	# clean up; removing SRA object
 	echo -e "\n Cleaning up..."
